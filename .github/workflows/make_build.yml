@@ -46,6 +46,13 @@ jobs:
         if: ${{ matrix.target.platform == 'linux' && matrix.target.arch == 'x86_32' }}
         run: |
           sudo apt-get update && sudo apt-get install -y gcc-multilib g++-multilib
+          
+      - name: Install Linux audio dependencies
+        if: ${{ matrix.target.platform == 'linux' }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            libasound2-dev \
+            libpulse-dev
 
       # Setup dependencies
       - name: Setup godot-cpp
