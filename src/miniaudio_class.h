@@ -17,10 +17,11 @@ class MiniaudioClass : public Node {
 private:
 	ma_device device;
 	ma_context context;
-
+#ifndef _WIN32
+	void select_system_audio_device();
     ma_device_id selectedDeviceId;
     bool deviceSelected = false;
-
+#endif
 	bool capturing = false;
 
 	std::vector<float> buffer;
@@ -36,7 +37,6 @@ private:
 	void push_samples(const float* data, int count);
 	
 protected:
-	void select_system_audio_device();
 	static void _bind_methods();
 
 public:
