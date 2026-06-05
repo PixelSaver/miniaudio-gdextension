@@ -107,5 +107,5 @@ jobs:
         uses: actions/upload-artifact/merge@v4
         with:
           name: miniaudio-gdextension
-          pattern: miniaudio-template-*
+          pattern: godot-cpp-template-*
           delete-merged: true
