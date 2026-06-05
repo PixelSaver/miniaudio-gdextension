@@ -120,52 +120,63 @@ void MiniaudioClass::data_callback(
 	const void* input,
 	ma_uint32 frame_count
 ) {
-	auto* self =
-		static_cast<MiniaudioClass*>(device->pUserData);
-
-	const float* samples =
-		static_cast<const float*>(input);
-
-	self->push_samples(samples, frame_count * 2);
+	// UtilityFunctions::print("Callback fired: " + String::num_int64(frame_count)); // add this
+    auto* self = static_cast<MiniaudioClass*>(device->pUserData);
+    const float* samples = static_cast<const float*>(input);
+    self->push_samples(samples, frame_count * 2);
 }
 
 void MiniaudioClass::select_system_audio_device() {
     ma_device_info* pCaptureDevices = nullptr;
     ma_uint32 captureDeviceCount = 0;
 
-    // Note: local variables — do NOT store the pointer, copy the ID
-    ma_result result = ma_context_get_devices(
-        &context,
-        NULL, NULL,                          // skip playback
-        &pCaptureDevices, &captureDeviceCount
-    );
+    ma_context_get_devices(&context, NULL, NULL, &pCaptureDevices, &captureDeviceCount);
 
-    if (result != MA_SUCCESS) {
-        UtilityFunctions::printerr("Failed to enumerate capture devices");
-        return;
+    // Get the running sink ALSA name
+    String runningSinkName;
+    FILE* pipe = popen("pactl list sinks short | awk '/RUNNING/ {print $2}'", "r");
+    if (pipe) {
+        char buf[256] = {};
+        if (fgets(buf, sizeof(buf), pipe)) {
+            runningSinkName = String(buf).strip_edges();
+        }
+        pclose(pipe);
+    }
+    UtilityFunctions::print("Running sink: " + runningSinkName);
+
+    // Extract the suffix after "pro-output-" if present (e.g. "7")
+    // For non-pro-output sinks, we fall back to substring matching
+    String outputSuffix;
+    int proIdx = runningSinkName.find("pro-output-");
+    if (proIdx >= 0) {
+        outputSuffix = runningSinkName.substr(proIdx + 11); // after "pro-output-"
+        UtilityFunctions::print("Looking for monitor with suffix: " + outputSuffix);
     }
 
-    UtilityFunctions::print("Capture devices found: " + String::num_int64(captureDeviceCount));
+    ma_uint32 fallbackIndex = UINT32_MAX;
 
     for (ma_uint32 i = 0; i < captureDeviceCount; i++) {
-        // Safety check — name may not be null-terminated if malformed
-        if (pCaptureDevices[i].name[0] == '\0') continue;
-
         String name = String(pCaptureDevices[i].name);
-        UtilityFunctions::print("  [" + String::num_int64(i) + "] " + name);
-
         String lower = name.to_lower();
-        if (lower.find("monitor") >= 0) {
-            selectedDeviceId = pCaptureDevices[i].id;  // copy by value
+        if (lower.find("monitor") < 0 || lower.find("webcam") >= 0) continue;
+
+        // Match "Monitor of ... Pro 7" by checking the suffix number at end of name
+        if (!outputSuffix.is_empty() && name.ends_with(" " + outputSuffix)) {
+            selectedDeviceId = pCaptureDevices[i].id;
             deviceSelected = true;
-            UtilityFunctions::print("Selected monitor: " + name);
+            UtilityFunctions::print("Selected (suffix match): " + name);
             return;
         }
+
+        if (fallbackIndex == UINT32_MAX) fallbackIndex = i;
     }
 
-    UtilityFunctions::printerr("No .monitor device found — will use default capture");
-    // Don't leave deviceSelected false if you want a fallback;
-    // just let it fall through and miniaudio uses the default device
+    // Fallback
+    if (fallbackIndex != UINT32_MAX) {
+        selectedDeviceId = pCaptureDevices[fallbackIndex].id;
+        deviceSelected = true;
+        UtilityFunctions::print("Selected (fallback): " + String(pCaptureDevices[fallbackIndex].name));
+    }
 }
 
 // Stores samples
