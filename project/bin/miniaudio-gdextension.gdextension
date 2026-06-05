@@ -11,11 +11,6 @@ macos.double.debug = "./macos/libminiaudio-gdextension.macos.template_debug.doub
 macos.single.release = "./macos/libminiaudio-gdextension.macos.template_release.dylib"
 macos.double.release = "./macos/libminiaudio-gdextension.macos.template_release.double.dylib"
 
-ios.arm64.single.debug = "./ios/libminiaudio-gdextension.ios.template_debug.arm64.dylib"
-ios.arm64.double.debug = "./ios/libminiaudio-gdextension.ios.template_debug.arm64.double.dylib"
-ios.arm64.single.release = "./ios/libminiaudio-gdextension.ios.template_release.arm64.dylib"
-ios.arm64.double.release = "./ios/libminiaudio-gdextension.ios.template_release.arm64.double.dylib"
-
 windows.x86_32.single.debug = "./windows/miniaudio-gdextension.windows.template_debug.x86_32.dll"
 windows.x86_32.double.debug = "./windows/miniaudio-gdextension.windows.template_debug.x86_32.double.dll"
 windows.x86_32.single.release = "./windows/miniaudio-gdextension.windows.template_release.x86_32.dll"
