@@ -5,7 +5,7 @@ import sys
 from methods import print_error
 
 
-libname = "EXTENSION-NAME"
+libname = "miniaudio-gdextension"
 projectdir = "project"
 
 localEnv = Environment(tools=["default"], PLATFORM="")
