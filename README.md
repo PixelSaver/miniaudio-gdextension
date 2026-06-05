@@ -1,56 +1,109 @@
-# godot-cpp template
-This repository serves as a quickstart template for GDExtension development with Godot 4.0+.
+# miniaudio-gdextension
 
-## Contents
-* Preconfigured source files for C++ development of the GDExtension ([src/](./src/))
-* An empty Godot project in [project/](./project), to test the GDExtension
-* godot-cpp as a submodule (`godot-cpp/`)
-* GitHub Issues template ([.github/ISSUE_TEMPLATE.yml](./.github/ISSUE_TEMPLATE.yml))
-* GitHub CI/CD workflows to publish your library packages when creating a release ([.github/workflows/builds.yml](./.github/workflows/builds.yml))
-* An SConstruct file with various functions, such as boilerplate for [Adding documentation](https://docs.godotengine.org/en/stable/tutorials/scripting/cpp/gdextension_docs_system.html)
+A GDExtension for Godot 4 that captures system audio on Windows and Linux using [miniaudio](https://miniaud.io/).
 
-## Usage - Template
+On Windows it uses WASAPI loopback. On Linux it automatically detects the active PulseAudio/PipeWire sink monitor.
 
-To use this template, log in to GitHub and click the green "Use this template" button at the top of the repository page. This will let you create a copy of this repository with a clean git history.
+## AI Disclaimer
 
-To get started with your new GDExtension, do the following:
+All code in this repository was written with the help of generative artificial intelligence. The original code comes from the [godot-cpp template](https://github.com/godotengine/godot-cpp-template/tree/main)
 
-* clone your repository to your local computer
-* initialize the godot-cpp git submodule via `git submodule update --init`
-* change the name of the compiled library file inside the [SConstruct](./SConstruct) file by modifying the `libname` string.
-  * change the paths of the to be loaded library name inside the [project/bin/example.gdextension](./project/bin/example.gdextension) file, by replacing `EXTENSION-NAME` with the name you chose for `libname`.
-* change the `entry_symbol` string inside [project/bin/example.gdextension](./project/bin/example.gdextension) file.
-  * rename the `example_library_init` function in [src/register_types.cpp](./src/register_types.cpp) to the same name you chose for `entry_symbol`.
-* change the name of the `project/bin/example.gdextension` file
+## Usage
 
-Now, you can build the project with the following command:
+Add the node `MiniaudioClass` to your scene, then call it from GDScript:
+
+```gdscript
+var miniaudio: MiniaudioClass
+
+func _ready():
+    miniaudio = MiniaudioClass.new()
+    add_child(miniaudio)
+    miniaudio.start()
+
+func _process(_delta):
+    if miniaudio.is_capturing():
+        var samples: PackedFloat32Array = miniaudio.get_samples()
+        # samples is interleaved stereo f32 at 48000hz
+```
+
+### API
+
+| Method | Returns | Description |
+|---|---|---|
+| `start()` | `void` | Begin capturing system audio |
+| `stop()` | `void` | Stop capturing and free resources |
+| `is_capturing()` | `bool` | Whether capture is currently active |
+| `get_samples()` | `PackedFloat32Array` | Returns buffered interleaved stereo f32 samples at 48kHz, up to ~1 second |
+
+## Installation
+
+Download the latest release zip and extract it into your project's `addons/` folder:
+
+```
+your-godot-project/
+  addons/
+    miniaudio/
+      miniaudio.gdextension
+      bin/
+        libminiaudio.linux.debug.x86_64.so
+        libminiaudio.windows.debug.x86_64.dll
+        ...
+```
+
+Godot will automatically load the extension on next launch.
+
+## Building from Source
+
+### Prerequisites
+
+**All platforms:**
+- Python 3.6+
+- SCons 4.0+
+
+**Linux only:**
+```shell
+sudo apt-get install libasound2-dev libpulse-dev
+```
+
+### Build
 
 ```shell
-scons
+git clone --recurse-submodules https://github.com/you/miniaudio-gdextension
+cd miniaudio-gdextension
+scons platform=linux target=template_debug   # Linux
+scons platform=windows target=template_debug # Windows (cross-compile or native)
 ```
 
-If the build command worked, you can test it with the [project](./project) project. Import it into Godot, open it, and launch the main scene. You should see it print the following line in the console:
+Compiled binaries are output to `bin/`.
 
-```
-Type: 24
-```
+## CI / Releases
 
-### Configuring an IDE
-You can develop your own extension with any text editor and by invoking scons on the command line, but if you want to work with an IDE (Integrated Development Environment), you can use a compilation database file called `compile_commands.json`. Most IDEs should automatically identify this file, and self-configure appropriately.
-To generate the database file, you can run one of the following commands in the project root directory:
-```shell
-# Generate compile_commands.json while compiling
-scons compiledb=yes
+This repository uses GitHub Actions to build for all supported platforms. To trigger a release build:
 
-# Generate compile_commands.json without compiling
-scons compiledb=yes compile_commands.json
-```
+1. Go to the **Actions** tab on GitHub
+2. Select **Make a GDExtension build for all supported platforms**
+3. Click **Run workflow**
 
-## Usage - Actions
+After it completes, download `godot-cpp-template.zip` from the **Artifacts** section of the workflow run.
 
-This repository comes with continuous integration (CI) through a GitHub action that tests building the GDExtension.
-It triggers automatically for each pushed change. You can find and edit it in [builds.yml](.github/workflows/ci.yml).
+## Platform Support
 
-There is also a workflow ([make_build.yml](.github/workflows/make_build.yml)) that builds the GDExtension for all supported platforms that you can use to create releases.
-You can trigger this workflow manually from the `Actions` tab on GitHub.
-After it is complete, you can find the file `godot-cpp-template.zip` in the `Artifacts` section of the workflow run.
+| Platform | Architecture | Status |
+|---|---|---|
+| Linux | x86_64, x86_32, arm64, arm32 | ✅ |
+| Windows | x86_64, x86_32, arm64 | ✅ |
+| macOS | universal | ⚠️ untested |
+| Android | x86_64, x86_32, arm64, arm32 | ❌ not supported |
+| iOS | arm64 | ❌ not supported |
+| Web | wasm32 | ❌ not supported |
+
+System audio capture requires OS-level loopback support. Mobile, web, and sandboxed platforms do not support this.
+
+## How It Works
+
+- **Windows** — uses `ma_device_type_loopback` via WASAPI, which natively captures all system audio
+- **Linux** — enumerates PulseAudio/PipeWire capture devices, queries the active running sink via `pactl`, and selects its monitor source automatically
+
+## License
+
+MIT
