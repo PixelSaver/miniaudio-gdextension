@@ -28,7 +28,7 @@ void MiniaudioClass::_bind_methods() {
 }
 
 MiniaudioClass::MiniaudioClass() {
-	
+
 }
 
 MiniaudioClass::~MiniaudioClass() {
@@ -37,61 +37,68 @@ MiniaudioClass::~MiniaudioClass() {
 
 // Begins system audio capture
 void MiniaudioClass::start() {
-	if (capturing) {
-		return;
-	}
+	if (capturing) return;
+
+	UtilityFunctions::print("Initializing context...");
 	
-	ma_backend backends[] = {
-		ma_backend_wasapi,
-		ma_backend_pulseaudio,
-		ma_backend_alsa
-	};
-	
-	if (ma_context_init(backends, 4, NULL, &context) != MA_SUCCESS) {
+	// Use PipeWire directly — PulseAudio compat layer can deadlock on init
+	// ma_backend backends[] = { ma_backend_pipewire };
+	// ma_result result = ma_context_init(backends, 1, NULL, &context);
+	// UtilityFunctions::print("Context OK");
+	if (ma_context_init(NULL, 0, NULL, &context) != MA_SUCCESS) {
 		UtilityFunctions::printerr("Context init failed");
 		return;
 	}
-
-	ma_result result = ma_context_init(
-		backends,
-		4,
-		NULL,
-		&context
-	);
-
-	#ifdef _WIN32
-	ma_device_config config =
-		ma_device_config_init(ma_device_type_loopback);
-	#else // Linux
-	select_system_audio_device();
-
-	ma_device_config config =
-		ma_device_config_init(ma_device_type_capture);
-	#endif
-	config.capture.format = ma_format_f32;
-	config.capture.channels = 2;
-	config.sampleRate = 48000;
-
-	config.dataCallback = data_callback;
-	config.pUserData = this;
 	
-	#ifndef _WIN32
+	// if (result != MA_SUCCESS) {
+	// 	// Fallback: let miniaudio auto-select
+	// 	UtilityFunctions::print("PipeWire failed, trying auto...");
+	// 	result = ma_context_init(NULL, 0, NULL, &context);
+	// 	if (result != MA_SUCCESS) {
+	// 		UtilityFunctions::printerr("Context init failed");
+	// 		return;
+	// 	}
+	// }
+	UtilityFunctions::print("Context OK");
+
+#ifdef _WIN32
+	ma_device_config config = ma_device_config_init(ma_device_type_loopback);
+#else
+	UtilityFunctions::print("Selecting device...");
+	select_system_audio_device();
+	UtilityFunctions::print("Device selected: " + String(deviceSelected ? "yes" : "no"));
+	ma_device_config config = ma_device_config_init(ma_device_type_capture);
+#endif
+
+	config.capture.format   = ma_format_f32;
+	config.capture.channels = 2;
+	config.sampleRate       = 48000;
+	config.dataCallback     = data_callback;
+	config.pUserData        = this;
+
+#ifndef _WIN32
 	if (deviceSelected) {
 		config.capture.pDeviceID = &selectedDeviceId;
 	}
-	#endif
+#endif
 
+	UtilityFunctions::print("Initializing device...");
 	if (ma_device_init(&context, &config, &device) != MA_SUCCESS) {
-  UtilityFunctions::printerr("Device init failed");
-  return;
+		UtilityFunctions::printerr("Device init failed");
+		ma_context_uninit(&context);
+		return;
 	}
-	
+	UtilityFunctions::print("Device OK");
+
 	if (ma_device_start(&device) != MA_SUCCESS) {
-  UtilityFunctions::printerr("Device start failed");
-  return;
+		UtilityFunctions::printerr("Device start failed");
+		ma_device_uninit(&device);
+		ma_context_uninit(&context);
+		return;
 	}
-	
+
 	capturing = true;
+	UtilityFunctions::print("Capture started");
 }
 
 // Halt system audio capture
@@ -123,37 +130,42 @@ void MiniaudioClass::data_callback(
 }
 
 void MiniaudioClass::select_system_audio_device() {
+    ma_device_info* pCaptureDevices = nullptr;
+    ma_uint32 captureDeviceCount = 0;
+
+    // Note: local variables — do NOT store the pointer, copy the ID
     ma_result result = ma_context_get_devices(
         &context,
-        &pPlaybackDevices,
-        &playbackDeviceCount,
-        NULL,
-        NULL
+        NULL, NULL,                          // skip playback
+        &pCaptureDevices, &captureDeviceCount
     );
 
     if (result != MA_SUCCESS) {
-        UtilityFunctions::printerr("Failed to get devices");
+        UtilityFunctions::printerr("Failed to enumerate capture devices");
         return;
     }
 
-    for (ma_uint32 i = 0; i < playbackDeviceCount; i++) {
-        const ma_device_info& info = pPlaybackDevices[i];
+    UtilityFunctions::print("Capture devices found: " + String::num_int64(captureDeviceCount));
 
-        String name = info.name;
+    for (ma_uint32 i = 0; i < captureDeviceCount; i++) {
+        // Safety check — name may not be null-terminated if malformed
+        if (pCaptureDevices[i].name[0] == '\0') continue;
 
-        // LINUX: look for monitor devices
-        if (name.find(".monitor") >= 0 ||
-            name.find("Monitor") >= 0) {
+        String name = String(pCaptureDevices[i].name);
+        UtilityFunctions::print("  [" + String::num_int64(i) + "] " + name);
 
-            selectedDeviceId = info.id;
+        String lower = name.to_lower();
+        if (lower.find("monitor") >= 0) {
+            selectedDeviceId = pCaptureDevices[i].id;  // copy by value
             deviceSelected = true;
-
-            UtilityFunctions::print("Selected system audio monitor: " + name);
+            UtilityFunctions::print("Selected monitor: " + name);
             return;
         }
     }
 
-    UtilityFunctions::printerr("No system audio monitor found");
+    UtilityFunctions::printerr("No .monitor device found — will use default capture");
+    // Don't leave deviceSelected false if you want a fallback;
+    // just let it fall through and miniaudio uses the default device
 }
 
 // Stores samples

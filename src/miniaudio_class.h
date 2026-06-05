@@ -18,9 +18,6 @@ private:
 	ma_device device;
 	ma_context context;
 
-    ma_device_info* pPlaybackDevices = nullptr;
-    ma_uint32 playbackDeviceCount = 0;
-
     ma_device_id selectedDeviceId;
     bool deviceSelected = false;
 

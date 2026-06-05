@@ -5,5 +5,6 @@ extends Node
 func _ready() -> void:
 	example.start()
 func _process(delta: float) -> void:
-	var samp := example.get_samples()
-	print(samp.size())
+	if Input.is_action_pressed("ui_accept"):
+		var samp := example.get_samples()
+		print(samp.size())
