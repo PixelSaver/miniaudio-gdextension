@@ -126,6 +126,7 @@ void MiniaudioClass::data_callback(
     self->push_samples(samples, frame_count * 2);
 }
 
+#ifndef _WIN32
 void MiniaudioClass::select_system_audio_device() {
     ma_device_info* pCaptureDevices = nullptr;
     ma_uint32 captureDeviceCount = 0;
@@ -178,6 +179,7 @@ void MiniaudioClass::select_system_audio_device() {
         UtilityFunctions::print("Selected (fallback): " + String(pCaptureDevices[fallbackIndex].name));
     }
 }
+#endif
 
 // Stores samples
 void MiniaudioClass::push_samples(
