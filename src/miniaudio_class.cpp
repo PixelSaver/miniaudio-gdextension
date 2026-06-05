@@ -282,9 +282,9 @@ PackedFloat32Array MiniaudioClass::get_fft(
     // --- Hann window ---
     if (apply_window) {
         for (int i = 0; i < fft_size; i++) {
-            float w = 0.5f * (1.0f - cosf(
-                (float)(2.0 * M_PI * i) / (float)(fft_size - 1)
-            ));
+	        float w = 0.5f * (1.0f - cosf(
+	            6.28318530717958647f * i / (float)(fft_size - 1)
+	        ));	
             fft_input[i] *= w;
         }
     }
