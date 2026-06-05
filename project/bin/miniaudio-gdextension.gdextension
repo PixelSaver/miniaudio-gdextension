@@ -46,7 +46,7 @@ android.arm64.double.debug = "./android/libminiaudio-gdextension.android.templat
 android.arm64.single.release = "./android/libminiaudio-gdextension.android.template_release.arm64.so"
 android.arm64.double.release = "./android/libminiaudio-gdextension.android.template_release.arm64.double.so"
 
-web.wasm32.single.debug = "./web/libminiaudio-gdextension.web.template_debug.wasm32.nothreads.wasm"
-web.wasm32.double.debug = "./web/libminiaudio-gdextension.web.template_debug.wasm32.double.nothreads.wasm"
-web.wasm32.single.release = "./web/libminiaudio-gdextension.web.template_release.wasm32.nothreads.wasm"
-web.wasm32.double.release = "./web/libminiaudio-gdextension.web.template_release.wasm32.double.nothreads.wasm"
+web.wasm32.single.debug = "./web/libminiaudio-gdextension.web.template_debug.wasm32.wasm"
+web.wasm32.double.debug = "./web/libminiaudio-gdextension.web.template_debug.wasm32.double.wasm"
+web.wasm32.single.release = "./web/libminiaudio-gdextension.web.template_release.wasm32.wasm"
+web.wasm32.double.release = "./web/libminiaudio-gdextension.web.template_release.wasm32.double.wasm"

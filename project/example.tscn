@@ -4,3 +4,4 @@
 
 [node name="Node" type="Node2D" unique_id=1512685082]
 script = ExtResource("1_jdh55")
+FFT_SIZE = 16384

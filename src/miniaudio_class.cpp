@@ -1,322 +1,345 @@
 #include "miniaudio_class.h"
-
 #include "godot_cpp/variant/utility_functions.hpp"
+#include <cmath>
+#include <algorithm>
 
 using namespace godot;
 
-// Registering methods such that GDScript sees them
+// ─── Godot binding ────────────────────────────────────────────────────────────
+
 void MiniaudioClass::_bind_methods() {
-	ClassDB::bind_method(
-		D_METHOD("start"),
-		&MiniaudioClass::start
-	);
-
-	ClassDB::bind_method(
-		D_METHOD("stop"),
-		&MiniaudioClass::stop
-	);
-
-	ClassDB::bind_method(
-		D_METHOD("get_samples"),
-		&MiniaudioClass::get_samples
-	);
-
-	ClassDB::bind_method(
-		D_METHOD("is_capturing"),
-		&MiniaudioClass::is_capturing
-	);
-
-	ClassDB::bind_method(
-	    D_METHOD("get_fft", "fft_size", "apply_window", "log_scale", "channel"),
-	    &MiniaudioClass::get_fft
-	);
+    ClassDB::bind_method(D_METHOD("start"),        &MiniaudioClass::start);
+    ClassDB::bind_method(D_METHOD("stop"),         &MiniaudioClass::stop);
+    ClassDB::bind_method(D_METHOD("get_samples"),  &MiniaudioClass::get_samples);
+    ClassDB::bind_method(D_METHOD("is_capturing"), &MiniaudioClass::is_capturing);
+    ClassDB::bind_method(
+        D_METHOD("get_fft", "fft_size", "apply_window", "log_scale", "channel"),
+        &MiniaudioClass::get_fft);
 }
 
-MiniaudioClass::MiniaudioClass() {
+// ─── Constructor / Destructor ─────────────────────────────────────────────────
 
+MiniaudioClass::MiniaudioClass() {
+    buffer.resize(MAX_BUFFER_SIZE, 0.0f);
 }
 
 MiniaudioClass::~MiniaudioClass() {
-	stop();
-	if (fft_setup) {
-	    pffft_destroy_setup(fft_setup);
-	    fft_setup = nullptr;
-	}
+    stop();
+    if (fft_setup) {
+        pffft_destroy_setup(fft_setup);
+        pffft_aligned_free(fft_input);
+        pffft_aligned_free(fft_output);
+        pffft_aligned_free(fft_work);
+    }
 }
 
-// Begins system audio capture
-void MiniaudioClass::start() {
-	if (capturing) return;
+// ─── Device lifecycle ─────────────────────────────────────────────────────────
 
-	UtilityFunctions::print("Initializing context...");
-	
-	// Use PipeWire directly — PulseAudio compat layer can deadlock on init
-	// ma_backend backends[] = { ma_backend_pipewire };
-	// ma_result result = ma_context_init(backends, 1, NULL, &context);
-	// UtilityFunctions::print("Context OK");
-	if (ma_context_init(NULL, 0, NULL, &context) != MA_SUCCESS) {
-		UtilityFunctions::printerr("Context init failed");
-		return;
-	}
-	
-	// if (result != MA_SUCCESS) {
-	// 	// Fallback: let miniaudio auto-select
-	// 	UtilityFunctions::print("PipeWire failed, trying auto...");
-	// 	result = ma_context_init(NULL, 0, NULL, &context);
-	// 	if (result != MA_SUCCESS) {
-	// 		UtilityFunctions::printerr("Context init failed");
-	// 		return;
-	// 	}
-	// }
-	UtilityFunctions::print("Context OK");
+void MiniaudioClass::start() {
+    if (capturing) return;
+
+    UtilityFunctions::print("1: context init...");
+    if (ma_context_init(NULL, 0, NULL, &context) != MA_SUCCESS) {
+        UtilityFunctions::printerr("Context init failed");
+        return;
+    }
+    UtilityFunctions::print("2: context ok");
 
 #ifdef _WIN32
-	ma_device_config config = ma_device_config_init(ma_device_type_loopback);
+    ma_device_config config = ma_device_config_init(ma_device_type_loopback);
 #else
-	UtilityFunctions::print("Selecting device...");
-	select_system_audio_device();
-	UtilityFunctions::print("Device selected: " + String(deviceSelected ? "yes" : "no"));
-	ma_device_config config = ma_device_config_init(ma_device_type_capture);
+	UtilityFunctions::print("3: selecting device...");
+    select_system_audio_device();
+    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    UtilityFunctions::print("4: device selected");
 #endif
 
-	config.capture.format   = ma_format_f32;
-	config.capture.channels = 2;
-	config.sampleRate       = 48000;
-	config.dataCallback     = data_callback;
-	config.pUserData        = this;
+    config.capture.format   = ma_format_f32;
+    config.capture.channels = 2;
+    config.sampleRate       = 48000;
+    config.dataCallback     = data_callback;
+    config.pUserData        = this;
 
 #ifndef _WIN32
-	if (deviceSelected) {
-		config.capture.pDeviceID = &selectedDeviceId;
-	}
+    if (deviceSelected)
+        config.capture.pDeviceID = &selectedDeviceId;
 #endif
 
-	UtilityFunctions::print("Initializing device...");
-	if (ma_device_init(&context, &config, &device) != MA_SUCCESS) {
-		UtilityFunctions::printerr("Device init failed");
-		ma_context_uninit(&context);
-		return;
-	}
-	UtilityFunctions::print("Device OK");
+	UtilityFunctions::print("5: device init...");
+    if (ma_device_init(&context, &config, &device) != MA_SUCCESS) {
+        UtilityFunctions::printerr("Device init failed");
+        ma_context_uninit(&context);
+        return;
+    }
 
-	if (ma_device_start(&device) != MA_SUCCESS) {
-		UtilityFunctions::printerr("Device start failed");
-		ma_device_uninit(&device);
-		ma_context_uninit(&context);
-		return;
-	}
+    UtilityFunctions::print("6: device start...");
+    if (ma_device_start(&device) != MA_SUCCESS) {
+        UtilityFunctions::printerr("Device start failed");
+        ma_device_uninit(&device);
+        ma_context_uninit(&context);
+        return;
+    }
 
-	capturing = true;
-	UtilityFunctions::print("Capture started");
+    UtilityFunctions::print("7: capturing!");
+    capturing = true;
 }
 
-// Halt system audio capture
 void MiniaudioClass::stop() {
-	if (!capturing) {
-		return;
-	}
-
-	ma_device_uninit(&device);
-	ma_context_uninit(&context);
-
-	capturing = false;
+    if (!capturing) return;
+    ma_device_uninit(&device);
+    ma_context_uninit(&context);
+    capturing = false;
 }
 
-// audio callback
-void MiniaudioClass::data_callback(
-	ma_device* device,
-	void* output,
-	const void* input,
-	ma_uint32 frame_count
-) {
-	// UtilityFunctions::print("Callback fired: " + String::num_int64(frame_count)); // add this
+// ─── Audio callback ───────────────────────────────────────────────────────────
+
+void MiniaudioClass::data_callback(ma_device* device, void* /*output*/,
+                                   const void* input, ma_uint32 frame_count) {
     auto* self = static_cast<MiniaudioClass*>(device->pUserData);
-    const float* samples = static_cast<const float*>(input);
-    self->push_samples(samples, frame_count * 2);
+    self->push_samples(static_cast<const float*>(input),
+                       static_cast<int>(frame_count) * 2);
 }
 
-#ifndef _WIN32
-void MiniaudioClass::select_system_audio_device() {
-    ma_device_info* pCaptureDevices = nullptr;
-    ma_uint32 captureDeviceCount = 0;
+// ─── Ring buffer write ────────────────────────────────────────────────────────
 
-    ma_context_get_devices(&context, NULL, NULL, &pCaptureDevices, &captureDeviceCount);
+void MiniaudioClass::push_samples(const float* data, int count) {
+    std::lock_guard<std::mutex> lock(buffer_mutex);
 
-    // Get the running sink ALSA name
-    String runningSinkName;
-    FILE* pipe = popen("pactl list sinks short | awk '/RUNNING/ {print $2}'", "r");
-    if (pipe) {
-        char buf[256] = {};
-        if (fgets(buf, sizeof(buf), pipe)) {
-            runningSinkName = String(buf).strip_edges();
+    // If incoming chunk is larger than the whole buffer, keep only the tail
+    if (static_cast<size_t>(count) > MAX_BUFFER_SIZE) {
+        data += count - static_cast<int>(MAX_BUFFER_SIZE);
+        count = static_cast<int>(MAX_BUFFER_SIZE);
+    }
+
+    const size_t space_to_end = MAX_BUFFER_SIZE - write_index;
+
+    if (static_cast<size_t>(count) <= space_to_end) {
+        std::copy(data, data + count, buffer.data() + write_index);
+        write_index += count;
+        if (write_index == MAX_BUFFER_SIZE) {
+            write_index    = 0;
+            buffer_wrapped = true;
         }
-        pclose(pipe);
-    }
-    UtilityFunctions::print("Running sink: " + runningSinkName);
-
-    // Extract the suffix after "pro-output-" if present (e.g. "7")
-    // For non-pro-output sinks, we fall back to substring matching
-    String outputSuffix;
-    int proIdx = runningSinkName.find("pro-output-");
-    if (proIdx >= 0) {
-        outputSuffix = runningSinkName.substr(proIdx + 11); // after "pro-output-"
-        UtilityFunctions::print("Looking for monitor with suffix: " + outputSuffix);
-    }
-
-    ma_uint32 fallbackIndex = UINT32_MAX;
-
-    for (ma_uint32 i = 0; i < captureDeviceCount; i++) {
-        String name = String(pCaptureDevices[i].name);
-        String lower = name.to_lower();
-        if (lower.find("monitor") < 0 || lower.find("webcam") >= 0) continue;
-
-        // Match "Monitor of ... Pro 7" by checking the suffix number at end of name
-        if (!outputSuffix.is_empty() && name.ends_with(" " + outputSuffix)) {
-            selectedDeviceId = pCaptureDevices[i].id;
-            deviceSelected = true;
-            UtilityFunctions::print("Selected (suffix match): " + name);
-            return;
-        }
-
-        if (fallbackIndex == UINT32_MAX) fallbackIndex = i;
-    }
-
-    // Fallback
-    if (fallbackIndex != UINT32_MAX) {
-        selectedDeviceId = pCaptureDevices[fallbackIndex].id;
-        deviceSelected = true;
-        UtilityFunctions::print("Selected (fallback): " + String(pCaptureDevices[fallbackIndex].name));
+    } else {
+        // Split across the wrap point
+        std::copy(data,                    data + space_to_end,
+                  buffer.data() + write_index);
+        std::copy(data + space_to_end,     data + count,
+                  buffer.data());
+        write_index    = static_cast<size_t>(count) - space_to_end;
+        buffer_wrapped = true;
     }
 }
-#endif
 
-// Stores samples
-void MiniaudioClass::push_samples(
-	const float* data,
-	int count
-) {
-	std::lock_guard<std::mutex> lock(buffer_mutex);
+// ─── Ring buffer read ─────────────────────────────────────────────────────────
 
-	for (int i = 0; i < count; i++) {
-		buffer.push_back(data[i]);
-	}
-
-	const size_t max_size = 48000 * 2; // ~1s
-
-	if (buffer.size() > max_size) {
-		buffer.erase(
-			buffer.begin(),
-			buffer.begin() + (buffer.size() - max_size)
-		);
-	}
-}
-
-// Returns samples
 PackedFloat32Array MiniaudioClass::get_samples() {
-	std::lock_guard<std::mutex> lock(buffer_mutex);
+    std::lock_guard<std::mutex> lock(buffer_mutex);
 
-	PackedFloat32Array out;
+    const size_t total = buffer_wrapped ? MAX_BUFFER_SIZE : write_index;
+    if (total == 0) return {};
 
-	out.resize(buffer.size());
+    PackedFloat32Array out;
+    out.resize(static_cast<int>(total));
+    float* dst = out.ptrw();
 
-	for (size_t i = 0; i < buffer.size(); i++) {
-		out[i] = buffer[i];
-	}
+    if (!buffer_wrapped) {
+        std::copy(buffer.data(), buffer.data() + write_index, dst);
+    } else {
+        // Oldest samples start at write_index
+        const size_t part1 = MAX_BUFFER_SIZE - write_index;
+        std::copy(buffer.data() + write_index, buffer.data() + MAX_BUFFER_SIZE, dst);
+        std::copy(buffer.data(),               buffer.data() + write_index,     dst + part1);
+    }
 
-	return out;
+    return out;
 }
 
 bool MiniaudioClass::is_capturing() const {
-	return capturing;
+    return capturing;
 }
 
-void MiniaudioClass::ensure_fft_setup(int fft_size) {
-    if (fft_setup && fft_setup_size == fft_size) return;
+// ─── Platform: Linux/macOS device selection ───────────────────────────────────
 
-    if (fft_setup) {
-        pffft_destroy_setup(fft_setup);
+#ifndef _WIN32
+void MiniaudioClass::select_system_audio_device() {
+    ma_device_info* capture_devices = nullptr;
+    ma_uint32       capture_count   = 0;
+    ma_context_get_devices(&context, NULL, NULL, &capture_devices, &capture_count);
+
+    // Ask PulseAudio which sink is RUNNING
+    String running_sink;
+    if (FILE* pipe = popen("pactl list sinks short | awk '/RUNNING/ {print $2}'", "r")) {
+        char buf[256] = {};
+        if (fgets(buf, sizeof(buf), pipe))
+            running_sink = String(buf).strip_edges();
+        pclose(pipe);
     }
 
-    fft_setup = pffft_new_setup(fft_size, PFFFT_REAL);
+    // Extract the output-index suffix from "pro-output-N"
+    String output_suffix;
+    int idx = running_sink.find("pro-output-");
+    if (idx >= 0)
+        output_suffix = running_sink.substr(idx + 11);
+
+    ma_uint32 fallback = UINT32_MAX;
+
+    for (ma_uint32 i = 0; i < capture_count; ++i) {
+        const String name  = String(capture_devices[i].name);
+        const String lower = name.to_lower();
+
+        // Only consider monitor sources (loopback), skip webcams
+        if (lower.find("monitor") < 0 || lower.find("webcam") >= 0)
+            continue;
+
+        if (!output_suffix.is_empty() && name.ends_with(" " + output_suffix)) {
+            selectedDeviceId = capture_devices[i].id;
+            deviceSelected   = true;
+            return;
+        }
+
+        if (fallback == UINT32_MAX)
+            fallback = i;
+    }
+
+    if (fallback != UINT32_MAX) {
+        selectedDeviceId = capture_devices[fallback].id;
+        deviceSelected   = true;
+    }
+}
+#endif
+
+// ─── FFT setup (cached per size) ─────────────────────────────────────────────
+
+void MiniaudioClass::ensure_fft_setup(int fft_size) {
+    if (fft_setup && fft_setup_size == fft_size) return; // already ready
+
+    // Tear down old state
+    if (fft_setup) {
+        pffft_destroy_setup(fft_setup);
+        pffft_aligned_free(fft_input);
+        pffft_aligned_free(fft_output);
+        pffft_aligned_free(fft_work);
+    }
+
+    fft_setup      = pffft_new_setup(fft_size, PFFFT_REAL);
     fft_setup_size = fft_size;
 
-    fft_input.resize(fft_size);
-    fft_output.resize(fft_size);
-    fft_work.resize(fft_size);
+    // pffft REQUIRES aligned allocations — never use plain new/vector here
+    fft_input  = static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+    fft_output = static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+    fft_work   = static_cast<float*>(pffft_aligned_malloc(fft_size * sizeof(float)));
+
+    // Staging buffer: interleaved stereo frames needed for one FFT pass
+    local_chunk.resize(fft_size * 2);
+
+    // Hann window — computed once, reused every frame
+    fft_window.resize(fft_size);
+    const float inv = 1.0f / static_cast<float>(fft_size - 1);
+    for (int i = 0; i < fft_size; ++i)
+        fft_window[i] = 0.5f * (1.0f - cosf(6.28318530718f * i * inv));
 }
 
-PackedFloat32Array MiniaudioClass::get_fft(
-    int fft_size,
-    bool apply_window,
-    bool log_scale,
-    int channel         // 0 = mono mix, 1 = left, 2 = right
-) {
-    // fft_size must be a multiple of 32 for pffft
-    // valid: 256, 512, 1024, 2048
+// ─── Public FFT entry point ───────────────────────────────────────────────────
+
+PackedFloat32Array MiniaudioClass::get_fft(int fft_size, bool apply_window,
+                                           bool log_scale, int channel) {
     ensure_fft_setup(fft_size);
 
-    // --- copy from ring buffer ---
+    const int samples_needed = fft_size * 2; // interleaved stereo
+
+    // ── 1. Copy latest samples out of the ring buffer (short critical section) ──
     {
         std::lock_guard<std::mutex> lock(buffer_mutex);
 
-        int needed = fft_size * 2; // stereo frames
-        if ((int)buffer.size() < needed) {
-            // not enough data yet — return empty
-            return PackedFloat32Array();
-        }
+        if (!buffer_wrapped && write_index < static_cast<size_t>(samples_needed))
+            return {}; // not enough data yet
 
-        int offset = (int)buffer.size() - needed; // take the most recent samples
+        const int read_start = static_cast<int>(write_index) - samples_needed;
 
-        for (int i = 0; i < fft_size; i++) {
-            float l = buffer[offset + i * 2];
-            float r = buffer[offset + i * 2 + 1];
-            if (channel == 1)
-                fft_input[i] = l;
-            else if (channel == 2)
-                fft_input[i] = r;
-            else
-                fft_input[i] = (l + r) * 0.5f;
+        if (read_start >= 0) {
+            // Contiguous — single copy
+            std::copy(buffer.data() + read_start,
+                      buffer.data() + write_index,
+                      local_chunk.data());
+        } else {
+            // Wraps around the ring: [end part] ++ [start part]
+            const int tail = -read_start;              // samples from the end
+            const int head = samples_needed - tail;    // samples from the start
+            std::copy(buffer.data() + MAX_BUFFER_SIZE - tail,
+                      buffer.data() + MAX_BUFFER_SIZE,
+                      local_chunk.data());
+            std::copy(buffer.data(),
+                      buffer.data() + head,
+                      local_chunk.data() + tail);
         }
     }
 
-    // --- Hann window ---
+    // ── 2. Deinterleave channel into fft_input ────────────────────────────────
+    //
+    // Pointer arithmetic once outside the loop is faster than index * 2 per iter.
+    {
+        const float* src = local_chunk.data();
+        float*       dst = fft_input;
+
+        if (channel == 1) {
+            for (int i = 0; i < fft_size; ++i, src += 2)
+                dst[i] = src[0];
+        } else if (channel == 2) {
+            for (int i = 0; i < fft_size; ++i, src += 2)
+                dst[i] = src[1];
+        } else {
+            // Mix both channels
+            for (int i = 0; i < fft_size; ++i, src += 2)
+                dst[i] = (src[0] + src[1]) * 0.5f;
+        }
+    }
+
+    // ── 3. Apply Hann window in-place ─────────────────────────────────────────
     if (apply_window) {
-        for (int i = 0; i < fft_size; i++) {
-	        float w = 0.5f * (1.0f - cosf(
-	            6.28318530717958647f * i / (float)(fft_size - 1)
-	        ));	
-            fft_input[i] *= w;
-        }
+        const float* win = fft_window.data();
+        float*       inp = fft_input;
+        for (int i = 0; i < fft_size; ++i)
+            inp[i] *= win[i];
     }
 
-    // --- pffft real forward transform ---
-    // pffft requires 16-byte aligned buffers — pffft_aligned_malloc handles this,
-    // but std::vector is fine on most platforms; use pffft_aligned_malloc if you
-    // see corruption on ARM
-    pffft_transform_ordered(
-        fft_setup,
-        fft_input.data(),
-        fft_output.data(),
-        fft_work.data(),
-        PFFFT_FORWARD
-    );
+    // ── 4. Forward FFT ────────────────────────────────────────────────────────
+    pffft_transform_ordered(fft_setup, fft_input, fft_output, fft_work, PFFFT_FORWARD);
 
-    // --- compute magnitudes for bins 1..N/2-1, skip DC (bin 0) ---
-    int num_bins = fft_size / 2;
+    // ── 5. Compute magnitude spectrum ─────────────────────────────────────────
+    //
+    // Output layout from pffft (REAL, ordered):
+    //   [0]           = DC  (purely real, no imaginary part stored)
+    //   [1]           = Nyquist (purely real, packed into index 1)
+    //   [2k], [2k+1]  = Re/Im of bin k, for k = 1 … N/2-1
+    //
+    // We skip DC (bin 0) — it's just the mean level, useless for visualisation.
+
+    const int   num_bins = fft_size / 2;
+    const float norm     = 1.0f / static_cast<float>(fft_size); // optional normalisation
+
     PackedFloat32Array magnitudes;
     magnitudes.resize(num_bins);
+    float* mag_ptr = magnitudes.ptrw();
 
-    // pffft output layout for real transform (ordered):
-    // [0]       = DC (bin 0), purely real
-    // [1]       = Nyquist, purely real
-    // [2k], [2k+1] = real/imag for bin k, k=1..N/2-1
-    magnitudes[0] = 0.0f; // skip DC
+    mag_ptr[0] = 0.0f; // DC suppressed
 
-    for (int k = 1; k < num_bins; k++) {
-        float re = fft_output[k * 2];
-        float im = fft_output[k * 2 + 1];
-        float mag = sqrtf(re * re + im * im) / (float)fft_size; // normalize by N
-        magnitudes[k] = log_scale ? log2f(mag + 1.0f) : mag;
+    const float* out = fft_output;
+
+    if (log_scale) {
+        for (int k = 1; k < num_bins; ++k) {
+            const float re  = out[k * 2];
+            const float im  = out[k * 2 + 1];
+            const float mag = (re * re + im * im) * norm;
+            mag_ptr[k] = log2f(mag + 1.0f); // back to original behaviour
+        }
+    } else {
+        // Linear magnitude (normalised)
+        for (int k = 1; k < num_bins; ++k) {
+            const float re = out[k * 2];
+            const float im = out[k * 2 + 1];
+            mag_ptr[k]     = sqrtf((re * re + im * im) * norm);
+        }
     }
 
     return magnitudes;

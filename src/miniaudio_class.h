@@ -9,26 +9,37 @@
 
 using namespace godot;
 
+
+
 class MiniaudioClass : public Node {
 	GDCLASS(MiniaudioClass, Node)
 
 private:
-    ma_device device;
-    ma_context context;
+	static constexpr size_t MAX_BUFFER_SIZE = 48000 * 2;
+	
+    ma_device device = {};
+    ma_context context = {};
     bool capturing = false;
+    
     std::vector<float> buffer;
+    size_t write_index = 0;
+    bool buffer_wrapped = false;
     std::mutex buffer_mutex;
     
     // PFFFT state — cached per fft_size to avoid alloc every frame
     PFFFT_Setup* fft_setup = nullptr;
     int fft_setup_size = 0;
-    std::vector<float> fft_input;
-    std::vector<float> fft_output;
-    std::vector<float> fft_work;
+    float* fft_input = nullptr;
+    float* fft_output = nullptr;
+    float* fft_work = nullptr;
+    
+    std::vector<float> fft_window;
+    std::vector<float> local_chunk;
 
 #ifndef _WIN32
-    ma_device_id selectedDeviceId;
+    ma_device_id selectedDeviceId = {};
     bool deviceSelected = false;
+    void select_system_audio_device();
 #endif
 
     static void data_callback(
@@ -39,10 +50,6 @@ private:
     );
     void push_samples(const float* data, int count);
     void ensure_fft_setup(int fft_size);
-
-#ifndef _WIN32
-    void select_system_audio_device();
-#endif
 
 protected:
     static void _bind_methods();

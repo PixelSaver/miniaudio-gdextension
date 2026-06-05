@@ -2,10 +2,10 @@ extends Node2D
 
 @onready var miniaudio := MiniaudioClass.new()
 
-const NUM_BARS  := 64
-const FFT_SIZE  := 4096
-const BAR_WIDTH := 16
-const MAX_HEIGHT := 400.0
+@export var NUM_BARS  := 64
+@export var FFT_SIZE  := 4096
+@export var BAR_WIDTH := 16
+@export var MAX_HEIGHT := 400.0
 
 var bar_heights: Array[float] = []
 
@@ -36,7 +36,7 @@ func _process(delta: float) -> void:
 		energy /= float(end_bin - start_bin)
 
 		var target = clamp(energy * 5.0, 0.0, 1.0) * MAX_HEIGHT
-		target = log(target+1.0)*100
+		target = log(target+1.0)*10
 
 		var speed = 0.8 if target > bar_heights[b] else 0.1
 		bar_heights[b] = lerp(bar_heights[b], target, speed)
