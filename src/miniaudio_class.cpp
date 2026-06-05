@@ -41,33 +41,56 @@ void MiniaudioClass::start() {
 		return;
 	}
 	
+	ma_backend backends[] = {
+		ma_backend_wasapi,
+		ma_backend_pulseaudio,
+		ma_backend_alsa
+	};
+	
+	if (ma_context_init(backends, 4, NULL, &context) != MA_SUCCESS) {
+		UtilityFunctions::printerr("Context init failed");
+		return;
+	}
+
+	ma_result result = ma_context_init(
+		backends,
+		4,
+		NULL,
+		&context
+	);
+
+	#ifdef _WIN32
+	ma_device_config config =
+		ma_device_config_init(ma_device_type_loopback);
+	#else // Linux
+	select_system_audio_device();
+
 	ma_device_config config =
 		ma_device_config_init(ma_device_type_capture);
-		// ma_device_config_init(ma_device_type_loopback);
-
+	#endif
 	config.capture.format = ma_format_f32;
 	config.capture.channels = 2;
 	config.sampleRate = 48000;
 
 	config.dataCallback = data_callback;
 	config.pUserData = this;
-
-	ma_result result =
-		ma_device_init(NULL, &config, &device);
-
-	if (result != MA_SUCCESS) {
-		UtilityFunctions::printerr(
-			vformat(
-				"Miniaudio init failed: %d",
-				result
-			)
-		);
-
-		return;
+	
+	#ifndef _WIN32
+	if (deviceSelected) {
+		config.capture.pDeviceID = &selectedDeviceId;
 	}
+	#endif
 
-	ma_device_start(&device);
-
+	if (ma_device_init(&context, &config, &device) != MA_SUCCESS) {
+  UtilityFunctions::printerr("Device init failed");
+  return;
+	}
+	
+	if (ma_device_start(&device) != MA_SUCCESS) {
+  UtilityFunctions::printerr("Device start failed");
+  return;
+	}
+	
 	capturing = true;
 }
 
@@ -78,6 +101,7 @@ void MiniaudioClass::stop() {
 	}
 
 	ma_device_uninit(&device);
+	ma_context_uninit(&context);
 
 	capturing = false;
 }
@@ -96,6 +120,40 @@ void MiniaudioClass::data_callback(
 		static_cast<const float*>(input);
 
 	self->push_samples(samples, frame_count * 2);
+}
+
+void MiniaudioClass::select_system_audio_device() {
+    ma_result result = ma_context_get_devices(
+        &context,
+        &pPlaybackDevices,
+        &playbackDeviceCount,
+        NULL,
+        NULL
+    );
+
+    if (result != MA_SUCCESS) {
+        UtilityFunctions::printerr("Failed to get devices");
+        return;
+    }
+
+    for (ma_uint32 i = 0; i < playbackDeviceCount; i++) {
+        const ma_device_info& info = pPlaybackDevices[i];
+
+        String name = info.name;
+
+        // LINUX: look for monitor devices
+        if (name.find(".monitor") >= 0 ||
+            name.find("Monitor") >= 0) {
+
+            selectedDeviceId = info.id;
+            deviceSelected = true;
+
+            UtilityFunctions::print("Selected system audio monitor: " + name);
+            return;
+        }
+    }
+
+    UtilityFunctions::printerr("No system audio monitor found");
 }
 
 // Stores samples

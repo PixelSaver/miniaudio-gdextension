@@ -16,6 +16,13 @@ class MiniaudioClass : public Node {
 
 private:
 	ma_device device;
+	ma_context context;
+
+    ma_device_info* pPlaybackDevices = nullptr;
+    ma_uint32 playbackDeviceCount = 0;
+
+    ma_device_id selectedDeviceId;
+    bool deviceSelected = false;
 
 	bool capturing = false;
 
@@ -32,6 +39,7 @@ private:
 	void push_samples(const float* data, int count);
 	
 protected:
+	void select_system_audio_device();
 	static void _bind_methods();
 
 public:
